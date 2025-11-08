@@ -20,9 +20,11 @@ import torch
 import torch.nn.functional as F
 from torch.optim import Adam
 from torch.amp import autocast, GradScaler
+from flow_matching.solver import Solver, ODESolver
+from flow_matching.utils import ModelWrapper
 import copy
 from .utils import soft_update, hard_update
-from .model import QNetwork, ValueNetwork, Policy_flow
+from .model import QNetwork, ValueNetwork, Policy_flow, PolicySampler
 import time
 from torch.optim import Adam
 import torch.optim as optim
@@ -61,7 +63,8 @@ class flowAC(object):
         self.trigger = 0
 
         if self.policy_type == "Flow":
-            self.policy = Policy_flow(num_inputs, action_space.shape[0], args.hidden_size, args.steps, action_space).to(self.device)
+            # self.policy = Policy_flow(num_inputs, action_space.shape[0], args.hidden_size, args.steps, action_space).to(self.device)
+            self.policy = PolicySampler(num_inputs, action_space.shape[0], args.hidden_size, args.steps, action_space).to(self.device)
             self.policy_optim = optim.Adam(self.policy.parameters(), lr=args.lr)
         else:
             pass
@@ -95,13 +98,15 @@ class flowAC(object):
         state = torch.FloatTensor(state).to(self.device).unsqueeze(0)
 
         if not evaluate:
-            action, _, _ = self.policy.sample_env(state)
+            # action, _, _ = self.policy.sample_env(state)
+            action, _, _ = self.policy.sample(state)
             noise = torch.rand_like(action) * 0.01 * self.noise_level
             noise = torch.clamp(noise, -0.25, 0.25)
             action = action + noise
         else:
             with torch.no_grad():
-                _, _, action = self.policy.sample_env(state)
+                # _, _, action = self.policy.sample_env(state)
+                _, _, action = self.policy.sample(state)
         
         return action.detach().cpu().numpy()[0].clip(self.action_space.low, self.action_space.high)
 

@@ -18,6 +18,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import Normal
+from flow_matching.solver.ode_solver import ODESolver
+from flow_matching.utils import ModelWrapper
 
 # Initialize  weights
 def weights_init_(m):
@@ -154,6 +156,78 @@ class Policy_flow(nn.Module):
             action = self.step(state, action, time_start, time_end)
             time_start = time_end
         
+        #action = torch.clamp(action,-1.0,1.0)
+        action = torch.tanh(action)
+        action = action * self.action_scale + self.action_bias
+        return action,0, action
+
+class policy_model(nn.Module):
+    def __init__(self, num_inputs, num_actions, hidden_dim):
+        super(policy_model, self).__init__()
+        self.linear1 = nn.Linear(num_inputs + num_actions + 1, hidden_dim)  # add time embedding, now, time_embedding = time
+        self.linear2 = nn.Linear(hidden_dim, hidden_dim)
+        self.LayerNorm = nn.LayerNorm(hidden_dim)
+        self.LayerNorm2 = nn.LayerNorm(hidden_dim)
+        self.linear3 = nn.Linear(hidden_dim, num_actions)
+        self.apply(weights_init_)
+    
+    def forward(self, action, time, state):
+        time = time.view(1, 1)
+        x = torch.cat([state, action, time], 1)
+        x = self.linear1(x)
+        x = self.LayerNorm(x)
+        x = F.elu(x)
+        x = self.linear2(x)
+        x = self.LayerNorm2(x)
+        x = F.elu(x)
+        x = self.linear3(x)
+        return x
+    
+
+class WrappedModel(ModelWrapper):
+    def __init__(self, model: nn.Module):
+        super().__init__(model)
+    def forward(self, x: torch.Tensor, t: torch.Tensor, **extras): # x is for action; t for time
+        return self.model(x, t, **extras)
+    
+# May be to define PolicySampler like PolicySampler(ModelWrapper) etc
+class PolicySampler(nn.Module):
+    def __init__(self, num_inputs, num_actions, hidden_dim, steps, action_space=None):
+        super(PolicySampler, self).__init__()
+        self.device = torch.device(f"cuda:0")
+        self.steps = steps
+        self.num_actions = num_actions
+        model = policy_model(num_inputs, num_actions, hidden_dim)
+        self.wrapped_model = WrappedModel(model)
+        self.solver = ODESolver(velocity_model=self.wrapped_model)
+
+        # action rescaling
+        if action_space is None:
+            self.action_scale = torch.tensor(1.)
+            self.action_bias = torch.tensor(0.)
+        else:
+            self.action_scale = torch.FloatTensor(
+                (action_space.high - action_space.low) / 2.).cuda(0)
+            self.action_bias = torch.FloatTensor(
+                (action_space.high + action_space.low) / 2.).cuda(0)
+
+    def forward(self, state, action, time):
+        return self.wrapped_model(x=action, t=time, state=state)
+
+    # sample an action from the normal, mean = 0, std = 1
+    def sample(self, state):
+        #TODO solve time start issue
+        time_start = torch.zeros(state.shape[0], 1, device=self.device)
+        time_step = 1.0 / self.steps  # Assuming we go from t=0 to t=1 in `steps` steps
+        action = torch.normal(0, 1, size=(state.shape[0], self.num_actions),device=self.device)
+        action = torch.clamp(action,-1.0,1.0)
+        print(f"{action.shape=}, {state.shape=}")
+        action = self.solver.sample(
+            x_init=action,
+            step_size=time_step,
+            state=state
+        )
+        assert isinstance(action, torch.Tensor)
         #action = torch.clamp(action,-1.0,1.0)
         action = torch.tanh(action)
         action = action * self.action_scale + self.action_bias
