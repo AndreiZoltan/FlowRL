@@ -13,7 +13,7 @@
 
 2. **Clone this Repository:**
     ```bash
-    git clone https://github.com/bytedance/FlowRL.git
+    git clone https://github.com/AndreiZoltan/FlowRL.git
     cd FlowRL
     ```
 
