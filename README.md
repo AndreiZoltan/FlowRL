@@ -25,7 +25,7 @@
 4. **Training Examples:**
     - Run a single training instance:
         ```bash
-        python3 main.py --domain dog --task run --method Affine --path rk4
+        python3 main.py --domain dog --task run --method rk4 --path Affine
         ```
 
 ## License
