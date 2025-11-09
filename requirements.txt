@@ -1,4 +1,4 @@
-# wandb
+wandb
 # tensorboard
 dm_control
 mujoco
@@ -7,3 +7,4 @@ torch
 imageio
 gymnasium
 tensorboard
+flow_matching
