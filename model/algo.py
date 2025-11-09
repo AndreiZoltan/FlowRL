@@ -22,9 +22,15 @@ from torch.optim import Adam
 from torch.amp import autocast, GradScaler
 from flow_matching.solver import Solver, ODESolver
 from flow_matching.utils import ModelWrapper
+from flow_matching.path.scheduler import LinearVPScheduler, CondOTScheduler
+from flow_matching.path import AffineProbPath, CondOTProbPath, GeodesicProbPath
+from flow_matching.utils.manifolds import Sphere, FlatTorus
+import pickle
+
 import copy
 from .utils import soft_update, hard_update
-from .model import QNetwork, ValueNetwork, Policy_flow, PolicySampler
+from .model import QNetwork, ValueNetwork, Policy_flow
+# from .model import QNetwork, ValueNetwork, PolicySampler
 import time
 from torch.optim import Adam
 import torch.optim as optim
@@ -54,6 +60,14 @@ class flowAC(object):
         self.amp_dtype = torch.bfloat16 
         self.scaler = GradScaler(enabled=self.amp_enabled and self.amp_dtype == torch.float16)
 
+        self.method = args.method
+        manifold = Sphere if args.manifold == "Sphere" else FlatTorus
+        if args.path == "Affine":
+            self.path = AffineProbPath(LinearVPScheduler())
+        elif args.path == "CondOT":
+            self.path = CondOTProbPath()
+        else:
+            self.path = GeodesicProbPath(CondOTScheduler(), manifold())
         # ----------------------  ----------------------
         self.critic = QNetwork(num_inputs, action_space.shape[0], args.hidden_size).to(self.device)
         self.critic_optim = optim.Adam(self.critic.parameters(), lr=args.lr)  
@@ -63,8 +77,8 @@ class flowAC(object):
         self.trigger = 0
 
         if self.policy_type == "Flow":
-            # self.policy = Policy_flow(num_inputs, action_space.shape[0], args.hidden_size, args.steps, action_space).to(self.device)
-            self.policy = PolicySampler(num_inputs, action_space.shape[0], args.hidden_size, args.steps, action_space).to(self.device)
+            self.policy = Policy_flow(num_inputs, action_space.shape[0], args.hidden_size, args.steps, action_space).to(self.device)
+            # self.policy = PolicySampler(num_inputs, action_space.shape[0], args.hidden_size, args.steps, action_space).to(self.device)
             self.policy_optim = optim.Adam(self.policy.parameters(), lr=args.lr)
         else:
             pass
@@ -99,14 +113,14 @@ class flowAC(object):
 
         if not evaluate:
             # action, _, _ = self.policy.sample_env(state)
-            action, _, _ = self.policy.sample(state)
+            action, _, _ = self.policy.sample(state, use_ode_solver=True, method=self.method)
             noise = torch.rand_like(action) * 0.01 * self.noise_level
             noise = torch.clamp(noise, -0.25, 0.25)
             action = action + noise
         else:
             with torch.no_grad():
                 # _, _, action = self.policy.sample_env(state)
-                _, _, action = self.policy.sample(state)
+                _, _, action = self.policy.sample(state, use_ode_solver=True, method=self.method)
         
         return action.detach().cpu().numpy()[0].clip(self.action_space.low, self.action_space.high)
 
@@ -114,7 +128,7 @@ class flowAC(object):
     def update_critic(self, state_batch, action_batch, reward_batch, next_state_batch, mask_batch):
         with autocast(device_type=self.device.type, dtype=self.amp_dtype, enabled=self.amp_enabled):
             with torch.no_grad():
-                next_state_action, _, _ = self.policy.sample(next_state_batch)
+                next_state_action, _, _ = self.policy.sample(next_state_batch, use_ode_solver=True, method=self.method)
                 qf1_next_target, qf2_next_target = self.critic_target(next_state_batch, next_state_action)
                 min_qf_next_target = torch.min(qf1_next_target, qf2_next_target)
                 next_q_value = reward_batch + mask_batch * self.gamma * (min_qf_next_target)
@@ -169,7 +183,7 @@ class flowAC(object):
     def update_policy(self, state_batch, action_batch, action_0, q_buffer):
         # torch.compiler.cudagraph_mark_step_begin()
         with autocast(device_type=self.device.type, dtype=self.amp_dtype, enabled=self.amp_enabled):
-            pi, _, _ = self.policy.sample(state_batch)
+            pi, _, _ = self.policy.sample(state_batch, use_ode_solver=True, method=self.method)
             # explore_ = 0.02 * torch.randn_like(action_batch,device=self.device)
             # explore_ = torch.clamp(explore_, -0.1, 0.1)
 
@@ -185,10 +199,13 @@ class flowAC(object):
             weights = torch.exp(weights- weights.mean())
             weights = self.lamda * weights
             weights= torch.clamp(weights, CFM_MIN, CFM_MAX)
-            velocity_field = action_batch - action_0
+            # velocity_field = action_batch - action_0
             t = torch.rand(action_batch.shape[0], 1).to(self.device)
-            action_t = t * action_batch+ (1. - t) * action_0
-            cfmloss = F.mse_loss(self.policy(state_batch, action_t, t), velocity_field, reduction='mean')
+            # action_t = t * action_batch+ (1. - t) * action_0
+            # t = torch.rand(action_batch.shape[0]).to(self.device)
+            path_sample = self.path.sample(t=t.squeeze(), x_0=action_0, x_1=action_batch)
+            # cfmloss = F.mse_loss(self.policy(state_batch, action_t, t), velocity_field, reduction='mean')            
+            cfmloss = F.mse_loss(self.policy(state_batch, path_sample.x_t, t), path_sample.dx_t, reduction='mean')
             cfmloss = weights * cfmloss
             policy_loss = (-min_qf_pi + cfmloss).mean()
         self.policy_optim.zero_grad()

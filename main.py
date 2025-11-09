@@ -200,8 +200,18 @@ if __name__ == "__main__":
     arg.add_arg("seed", 0, "experiment seed")
     arg.add_arg("epsilon", 0.0, "random noise for exploration")
     arg.add_arg("lamda", 0.1, "lagrange_multiplier")
+    arg.add_arg("solver", "ODE", "select solver between 'ODE' and 'Riemannian'")
+    arg.add_arg("path", "CondOT", "select prob path among 'CondOT', 'Affine' and 'Geodesic'")
+    arg.add_arg("sch", "CondOT", "select scheduler between 'Linear' and 'CondOT'")
+    arg.add_arg("manifold", "Sphere", "select manifold between 'Sphere' and 'Torus'")
+    arg.add_arg("method", "midpoint", "select method among torchdiffeq methods")
     arg.parser()
-
+    
+    assert arg.solver in ['ODE', 'Riemannian'], f"Invalid solver: {arg.solver}. Must be 'ODE' or 'Riemannian'."
+    assert arg.path in ['CondOT', 'Affine', 'Geodesic'], f"Invalid path: {arg.path}. Must be 'CondOT', 'Affine', or 'Geodesic'."
+    assert arg.sch in ['Linear', 'CondOT'], f"Invalid sch: {arg.sch}. Must be 'Linear' or 'CondOT'."
+    assert arg.manifold in ['Sphere', 'Torus'], f"Invalid manifold: {arg.manifold}. Must be 'Sphere' or 'Torus'."
+    assert arg.method in ['dopri8', 'dopri5', 'bosh3', 'fehlberg2', 'adaptive_heun', 'euler', 'midpoint', 'rk4', 'explicit_adams', 'implicit_adams']
     config = default_config
     
     config.update(arg)
