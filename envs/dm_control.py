@@ -18,7 +18,7 @@ from dm_control import suite
 import dm_env
 from dm_env import specs
 import numpy as np
-from gym import spaces
+from gymnasium import spaces
 import collections
 from dm_control.rl.control import FLAT_OBSERVATION_KEY
 from dm_control.suite.wrappers import action_scale, pixels
