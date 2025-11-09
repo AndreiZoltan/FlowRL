@@ -13,7 +13,7 @@
 # // limitations under the License.
 
 
-from gym.envs import register
+from gymnasium.envs.registration import register
 
 # Register the DM Control environments.
 from dm_control import suite
