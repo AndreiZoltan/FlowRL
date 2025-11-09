@@ -27,6 +27,7 @@
         ```bash
         python3 main.py --domain dog --task run --method rk4 --path Affine
         ```
-
+For linear path use `--path CondOT` for variance preserving use `--path Affine`.
+Methods choose among `midpoint`, `rk4` and `implicit_adams`.
 ## License
 This project is licensed under the Apache License 2.0. See the LICENSE file for details.
